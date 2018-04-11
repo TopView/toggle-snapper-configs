@@ -1,0 +1,116 @@
+#!/bin/bash 	
+#editor: tab size 4; wide load
+
+help="$(cat<<'end'
+--- PURPOSE -----------------------------------------------------------------------------------
+ This is a bash script to quickly and easily toggle Snapper's automatic features.
+
+ Use it, for example, while you are working to recover from an install that went wrong and
+ when you temporarily don't want to risk accidentally loosing valuable snapshots that
+ otherwise might be lost as part of the automatic clean up process.  Especially useful when a
+ late Friday crash occurs, and you want to be able to safely shutdown and then start the 
+ recovery process on Monday morning.
+
+ It both disables the automatic deletion of older snapshots (i.e. it disables automatic 
+ 'CLEANUPs') and disables the creation of new hourly snapshots.  In other words it moves
+ Snapper into, and then out of, a quiescent state, and in all partitions that it's configured
+ for.
+
+ When run a second time, it restores Snapper to exactly how it was previously configured.
+ TIP: Don't forget to re-enable automatic snapshots once you have your repairs done.
+ 
+--- USAGE -------------------------------------------------------------------------------------
+   # ./toggle-snapper-configs ...
+   $ sudo ./toggle-snapper-configs ...
+
+   toggle-snapper-configs		- Run first  time:  Saves a copy of all configuration files and 
+								  					then sets *_CLEANUP and also TIMELINE_CREATE 
+													settings to 'no' (or off) in all 
+													configuration files.
+
+				 				- Run second time:  Restores all previous configuration files.
+
+								- Every      time:  Displays related configuration settings 
+													after toggle operation completes.
+
+   toggle-snapper-configs --help	- show purpose, usage, license, version, contact & exit.
+
+   toggle-snapper-configs requires root permission to run, and can be located anywhere you 
+   like.  One reccomended location is in the same folder as your Snapper configuration files.
+
+--- LICENSE -----------------------------------------------------------------------------------
+ Copyright 2018 Howard Johnson. Licensed under the Apache License, Version 2.0 (the "License"); 
+ you may not use this file except in compliance with the License. You may obtain a copy of the 
+ License at:  http://www.apache.org/licenses/LICENSE-2.0
+
+ Unless required by applicable law or agreed to in writing, software distributed under the 
+ License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, 
+ either express or implied.  See the License for the specific language governing permissions
+ and limitations under the License.
+
+--- VERSION ----------------------------------------------------------------------------------- 
+Snapper toggle-configs version: 0.2
+
+--- FEEDBACK ----------------------------------------------------------------------------------
+Please send bugs or feature requests to BridgeportContractor@gmail.com.  Thank you.
+end
+)"
+
+
+#--- CONSTANTS ---------------------------------------------------------------------------------
+CONFIGS_DIR=/etc/snapper/configs/															#Directory where Snapper's config files are located
+
+#List of settings names in each config file to toggle:
+SETTINGS=(\
+		    'NUMBER_CLEANUP'	\
+		  'TIMELINE_CREATE'		\
+		  'TIMELINE_CLEANUP'	\
+	'EMPTY_PRE_POST_CLEANUP'	\
+)
+
+
+#--- FUNCTIONS ---------------------------------------------------------------------------------
+#--Convert tabs to spaces (for help message)
+tabs2spaces () {        																	#Usage: tabs2spaces <tab width> <string name>
+    local cursor=0
+    while IFS= read -r -n1 -d '' c; do
+          if [ "$c" == $'\n'    ]; then echo; cursor=0;                                 	#Start over w/ each newline
+        elif [ "$c" == $'\t'    ]; then                                                 	#Tabs:
+            local spaces=$(( $1 - cursor % $1 ))                                        	#How many spaces for this tab
+            ((cursor+=spaces));  while ((spaces)); do echo -n ' ';  ((spaces--)); done  	#put the spaces in place of the tab
+																							# (tried to make work w/ for but can't loop zero times)
+        else                                          echo -n "$c"; ((cursor++));       	#Otherwise
+        fi;
+    done<<<"${!2}"
+}
+
+#Generates and returns a filename for a saved file
+function file_saved() { echo $(dirname "$file")/.$(basename "$file")-saved;}				#Usage: file_saved	 (input: $file;  output: standard output)
+
+#--Errors
+Ebort       () { echo -e "ERROR:  $1\nAborting"; exit;}            							#Usage: Ebort <error#> <error message>
+#Ebort "test" 
+
+
+#--- MAIN LINE ---------------------------------------------------------------------------------
+if [ "$1" = "--help" 	]; then echo "$(tabs2spaces 4 help)"; exit;fi						#'4' here because this file is edited w/ tabs = 4 spaces
+
+#--Get list of configuration files to alter
+config_files=$(grep -le '^SUBVOLUME=' "$CONFIGS_DIR"* 2>/dev/null | grep -ve '\.' | grep -ve '~$';)
+	[ "$config_files" ] || Ebort "No Snapper configuration files found in: $CONFIGS_DIR"
+
+#-- Toggle values of settings (Disable or Restore)
+while read -r file; do
+
+	#-- Toggle settings (i.e. enable/disable; yes/no)
+	if [ -f "$(file_saved)" ]
+   	then echo -e "Restoring: $file"; mv 	    "$(file_saved)" "$file"	||Ebort "mv failed"	#Restore to what it was before
+	else echo -e "Disabling: $file"; cp "$file" "$(file_saved)"			||Ebort "cp failed"	#Save a copy to later restore from, then turn parameters off
+		for i in "${SETTINGS[@]}"; do sed -i -e "s|$i=\"yes\"|$i=\"no\"|g" "$file"; done	#for each setting to change
+	fi
+
+	#-- Finally report what current settings are for this config file
+	:;	for i in "${SETTINGS[@]}"; do echo "  $(grep -e "$i" "$file")"			  ; done 	#for each setting
+
+#Get list of config files; remove any with dots (i.e. hidden or .swp, etc); also remove any with tilde tails
+done <<< "$config_files"																	#Loop on list of configuration files to alter
